@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -8,6 +8,8 @@ from PIL import Image, ImageTk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import random
+import csv
+import os
 
 class MNISTPreprocessor(tk.Tk):
     def __init__(self):
@@ -24,6 +26,7 @@ class MNISTPreprocessor(tk.Tk):
         self.stride = tk.IntVar(value=1)
         self.kernel_elements = [[tk.DoubleVar(value=1.0 if i == j else 0.0) 
                                 for j in range(5)] for i in range(5)]
+        self.processed_samples = None  # Store processed samples
         
         # Create the GUI
         self.create_widgets()
@@ -102,6 +105,10 @@ class MNISTPreprocessor(tk.Tk):
         
         # Apply button
         ttk.Button(controls_frame, text="Apply Fresh Preprocessing", command=self.update_processed_images).pack(
+            fill=tk.X, padx=5, pady=5)
+        
+        # Save to CSV button
+        ttk.Button(controls_frame, text="Save Processed Samples to CSV", command=self.save_to_csv).pack(
             fill=tk.X, padx=5, pady=5)
         
         # Create vertical paned window for original and processed images
@@ -288,6 +295,7 @@ class MNISTPreprocessor(tk.Tk):
             
             # Update processed images based on current kernel
             self.update_processed_images()
+            
         except Exception as e:
             tk.messagebox.showerror("Error", f"Failed to refresh samples: {str(e)}")
     
@@ -309,7 +317,8 @@ class MNISTPreprocessor(tk.Tk):
                 
                 # Display the image with removed frames and border
                 ax = axes[row, col]
-                ax.imshow(img_np, cmap='gray', interpolation='nearest')
+                # Use 'none' interpolation to keep exact pixel sizes for original images
+                ax.imshow(img_np, cmap='gray', interpolation='none')
                 
                 # Remove axis ticks and frames
                 ax.set_xticks([])
@@ -348,27 +357,18 @@ class MNISTPreprocessor(tk.Tk):
             height, width = image.shape
             k_height, k_width = kernel.shape
             
-            # Calculate padding needed to maintain original size
-            pad_h = ((height - 1) * stride + k_height - height) // 2
-            pad_w = ((width - 1) * stride + k_width - width) // 2
-            
-            # Apply padding to image
-            padded_image = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
-            
-            # Calculate output dimensions - should match original image size
-            out_height = height
-            out_width = width
+            # Calculate output dimensions based on stride
+            out_height = (height - k_height) // stride + 1
+            out_width = (width - k_width) // stride + 1
             
             # Initialize output image
             output = np.zeros((out_height, out_width))
             
-            # Vectorized convolution using numpy for better performance
-            for i in range(0, out_height):
-                y_pos = i * stride
-                for j in range(0, out_width):
-                    x_pos = j * stride
+            # Perform convolution with stride
+            for i in range(out_height):
+                for j in range(out_width):
                     # Extract window
-                    window = padded_image[y_pos:y_pos+k_height, x_pos:x_pos+k_width]
+                    window = image[i*stride:i*stride+k_height, j*stride:j*stride+k_width]
                     # Apply kernel and sum
                     if window.shape == kernel.shape:  # Ensure window has correct size
                         output[i, j] = np.sum(window * kernel)
@@ -395,15 +395,66 @@ class MNISTPreprocessor(tk.Tk):
         stride = self.stride.get()
         
         # Apply convolution to all samples
-        processed_samples = {}
+        self.processed_samples = {}
         for cls, samples in self.current_samples.items():
-            processed_samples[cls] = []
+            self.processed_samples[cls] = []
             for img in samples:
                 processed_img = self.apply_convolution(img, kernel, stride)
-                processed_samples[cls].append(processed_img)
+                self.processed_samples[cls].append(processed_img)
         
         # Display processed samples
-        self.display_image_atlas(processed_samples, self.processed_fig, self.processed_canvas)
+        self.display_image_atlas(self.processed_samples, self.processed_fig, self.processed_canvas)
+
+    def save_to_csv(self):
+        """Save processed samples to CSV"""
+        if not hasattr(self, 'processed_samples') or self.processed_samples is None:
+            messagebox.showinfo("No Processed Data", "No processed samples to save. Please apply preprocessing first.")
+            return
+        
+        # Get dimensions from first processed sample
+        first_class = next(iter(self.processed_samples.keys()))
+        first_sample = self.processed_samples[first_class][0]
+        img_height, img_width = first_sample.shape
+        num_pixels = img_height * img_width
+        
+        # Ask user where to save the CSV file
+        csv_file = filedialog.asksaveasfilename(
+            defaultextension=".csv", 
+            filetypes=[("CSV Files", "*.csv")],
+            title="Save Processed Samples to CSV"
+        )
+        if not csv_file:
+            return
+        
+        try:
+            # Open CSV file for writing
+            with open(csv_file, 'w', newline='') as file:
+                # Create header: 'class' followed by pixel0, pixel1, etc.
+                header = ['class'] + [f'pixel{i}' for i in range(num_pixels)]
+                
+                # Create CSV writer and write header
+                writer = csv.writer(file)
+                writer.writerow(header)
+                
+                # Write each processed sample
+                for cls, samples in self.processed_samples.items():
+                    for processed_img in samples:
+                        # Flatten the 2D image array to 1D
+                        flattened = processed_img.flatten()
+                        
+                        # Convert to list of values scaled to 0-255 (standard for MNIST CSV format)
+                        pixel_values = [int(p * 255) for p in flattened]
+                        
+                        # Write row: class label followed by pixel values
+                        writer.writerow([cls] + pixel_values)
+            
+            messagebox.showinfo("Success", f"Processed samples saved to {os.path.basename(csv_file)}\n"
+                               f"Format: {len(header)} columns (1 class + {num_pixels} pixels)\n"
+                               f"Image size: {img_height}x{img_width}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save CSV: {str(e)}")
+            print(f"Error details: {e}")
 
 if __name__ == "__main__":
     app = MNISTPreprocessor()
