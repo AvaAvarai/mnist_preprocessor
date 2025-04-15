@@ -4,6 +4,8 @@ MNIST OCR image preproccesor program in Python
 
 A GUI application for visualizing and preprocessing MNIST handwritten digit images with custom convolution kernels.
 
+![screenshot](screenshot.png)
+
 ## Features
 
 - Display 10 sample images from each MNIST class (0-9)
@@ -50,4 +52,8 @@ The MNIST dataset will be automatically downloaded on first run.
    - Choose stride (1, 2, or 3)
    - Either input values manually in the kernel matrix or select a preset
 4. Click "Apply Preprocessing" to see the processed images
-5. Compare the original images (top) with the processed images (bottom) 
+5. Compare the original images (top) with the processed images (bottom).
+
+### Todo
+
+- Multiple convolutions.
