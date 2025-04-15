@@ -58,8 +58,9 @@ class MNISTPreprocessor(tk.Tk):
         main_paned.pack(fill=tk.BOTH, expand=True)
         
         # Controls section
-        controls_frame = ttk.LabelFrame(main_paned, text="Controls")
+        controls_frame = ttk.LabelFrame(main_paned, text="Controls", width=250)
         controls_frame.pack(fill=tk.Y, padx=5, pady=5)
+        controls_frame.pack_propagate(False)  # Prevent frame from shrinking
         
         # Display section
         display_frame = ttk.Frame(main_paned)
@@ -79,23 +80,28 @@ class MNISTPreprocessor(tk.Tk):
         kernel_frame.pack(fill=tk.X, padx=5, pady=5)
         
         ttk.Label(kernel_frame, text="Kernel Size:").pack(anchor=tk.W, padx=5, pady=2)
-        kernel_size_combo = ttk.Combobox(kernel_frame, textvariable=self.kernel_size, values=[3, 5])
-        kernel_size_combo.pack(fill=tk.X, padx=5, pady=2)
-        kernel_size_combo.bind("<<ComboboxSelected>>", self.update_kernel_ui)
+        kernel_size_spin = ttk.Spinbox(kernel_frame, from_=1, to=99, textvariable=self.kernel_size, width=10)
+        kernel_size_spin.pack(fill=tk.X, padx=5, pady=2)
+        kernel_size_spin.bind("<Return>", self.update_kernel_ui)
+        kernel_size_spin.bind("<FocusOut>", self.update_kernel_ui)
+        # Add trace to update immediately when value changes
+        self.kernel_size.trace_add("write", lambda *args: self.update_kernel_ui())
         
         # Stride
         ttk.Label(kernel_frame, text="Stride:").pack(anchor=tk.W, padx=5, pady=2)
-        stride_combo = ttk.Combobox(kernel_frame, textvariable=self.stride, values=[1, 2, 3])
-        stride_combo.pack(fill=tk.X, padx=5, pady=2)
+        stride_spin = ttk.Spinbox(kernel_frame, from_=1, to=99, textvariable=self.stride, width=10)
+        stride_spin.pack(fill=tk.X, padx=5, pady=2)
+        # Add trace to update immediately when value changes
+        self.stride.trace_add("write", lambda *args: self.validate_stride())
         
         # Kernel elements
         self.kernel_elements_frame = ttk.LabelFrame(kernel_frame, text="Kernel Elements")
-        self.kernel_elements_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.kernel_elements_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         self.create_kernel_ui()
         
         # Apply button
-        ttk.Button(controls_frame, text="Apply Preprocessing", command=self.update_processed_images).pack(
+        ttk.Button(controls_frame, text="Apply Fresh Preprocessing", command=self.update_processed_images).pack(
             fill=tk.X, padx=5, pady=5)
         
         # Create vertical paned window for original and processed images
@@ -127,37 +133,85 @@ class MNISTPreprocessor(tk.Tk):
         
         size = self.kernel_size.get()
         
+        # Create scrollable frame for large kernels
+        canvas = tk.Canvas(self.kernel_elements_frame, width=200)
+        scrollbar = ttk.Scrollbar(self.kernel_elements_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
         # Create matrix of entry widgets
         for i in range(size):
             for j in range(size):
-                entry = ttk.Entry(self.kernel_elements_frame, width=5, 
+                # Create additional kernel element variables if needed
+                if i >= len(self.kernel_elements) or j >= len(self.kernel_elements[0]):
+                    while i >= len(self.kernel_elements):
+                        self.kernel_elements.append([tk.DoubleVar(value=0.0) for _ in range(max(5, size))])
+                    while j >= len(self.kernel_elements[0]):
+                        for row in self.kernel_elements:
+                            row.append(tk.DoubleVar(value=0.0))
+                
+                entry = ttk.Entry(scrollable_frame, width=3, 
                                  textvariable=self.kernel_elements[i][j])
-                entry.grid(row=i, column=j, padx=2, pady=2)
+                entry.grid(row=i, column=j, padx=1, pady=1)
         
-        # Add preset buttons
-        presets_frame = ttk.Frame(self.kernel_elements_frame)
+        # Add preset buttons in a more compact layout
+        presets_frame = ttk.Frame(scrollable_frame)
         presets_frame.grid(row=size, column=0, columnspan=size, pady=5)
         
+        # Create a grid of preset buttons for better space utilization
         ttk.Button(presets_frame, text="Identity", 
-                  command=lambda: self.set_kernel_preset("identity")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(presets_frame, text="Edge Detection", 
-                  command=lambda: self.set_kernel_preset("edge")).pack(side=tk.LEFT, padx=2)
+                  command=lambda: self.set_kernel_preset("identity")).grid(row=0, column=0, padx=1, pady=1)
+        ttk.Button(presets_frame, text="Edge", 
+                  command=lambda: self.set_kernel_preset("edge")).grid(row=0, column=1, padx=1, pady=1)
         ttk.Button(presets_frame, text="Blur", 
-                  command=lambda: self.set_kernel_preset("blur")).pack(side=tk.LEFT, padx=2)
+                  command=lambda: self.set_kernel_preset("blur")).grid(row=1, column=0, padx=1, pady=1)
         ttk.Button(presets_frame, text="Sharpen", 
-                  command=lambda: self.set_kernel_preset("sharpen")).pack(side=tk.LEFT, padx=2)
+                  command=lambda: self.set_kernel_preset("sharpen")).grid(row=1, column=1, padx=1, pady=1)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        if size > 7:  # Only show scrollbar for larger kernels
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
     
     def update_kernel_ui(self, event=None):
         """Update kernel UI when size changes"""
+        # Validate kernel size is a positive integer
+        try:
+            size = self.kernel_size.get()
+            if size < 1:
+                self.kernel_size.set(1)
+            elif size > 11:  # Set a reasonable upper limit for UI purposes
+                self.kernel_size.set(11)
+        except:
+            self.kernel_size.set(3)  # Default if invalid
+        
         self.create_kernel_ui()
+    
+    def validate_stride(self):
+        """Ensure stride is a positive integer"""
+        try:
+            stride = self.stride.get()
+            if stride < 1:
+                self.stride.set(1)
+            elif stride > 10:  # Set a reasonable upper limit
+                self.stride.set(10)
+        except:
+            self.stride.set(1)  # Default if invalid
     
     def set_kernel_preset(self, preset):
         """Set the kernel to a predefined preset"""
         size = self.kernel_size.get()
         
         # Reset all values to zero
-        for i in range(5):
-            for j in range(5):
+        for i in range(size):
+            for j in range(size):
                 self.kernel_elements[i][j].set(0.0)
         
         if preset == "identity":
@@ -165,17 +219,24 @@ class MNISTPreprocessor(tk.Tk):
             center = size // 2
             self.kernel_elements[center][center].set(1.0)
             
-        elif preset == "edge" and size == 3:
-            # Simple edge detection
-            self.kernel_elements[0][0].set(-1.0)
-            self.kernel_elements[0][1].set(-1.0)
-            self.kernel_elements[0][2].set(-1.0)
-            self.kernel_elements[1][0].set(-1.0)
-            self.kernel_elements[1][1].set(8.0)
-            self.kernel_elements[1][2].set(-1.0)
-            self.kernel_elements[2][0].set(-1.0)
-            self.kernel_elements[2][1].set(-1.0)
-            self.kernel_elements[2][2].set(-1.0)
+        elif preset == "edge":
+            # Edge detection for arbitrary sizes
+            if size % 2 == 1:  # Only works with odd-sized kernels
+                center = size // 2
+                # Set all elements to -1
+                for i in range(size):
+                    for j in range(size):
+                        self.kernel_elements[i][j].set(-1.0)
+                # Set center to positive value: 8 for 3x3, scaled for other sizes
+                center_value = size * size - 1
+                self.kernel_elements[center][center].set(float(center_value))
+            else:
+                # For even sizes, use a simple approximation
+                messagebox.showwarning("Warning", "Edge detection works best with odd-sized kernels. Using approximation.")
+                for i in range(size):
+                    for j in range(size):
+                        self.kernel_elements[i][j].set(-1.0)
+                self.kernel_elements[size//2][size//2].set(float(size*size))
             
         elif preset == "blur":
             # Box blur
@@ -184,13 +245,25 @@ class MNISTPreprocessor(tk.Tk):
                 for j in range(size):
                     self.kernel_elements[i][j].set(value)
                     
-        elif preset == "sharpen" and size == 3:
-            # Sharpen
-            self.kernel_elements[0][1].set(-1.0)
-            self.kernel_elements[1][0].set(-1.0)
-            self.kernel_elements[1][1].set(5.0)
-            self.kernel_elements[1][2].set(-1.0)
-            self.kernel_elements[2][1].set(-1.0)
+        elif preset == "sharpen":
+            # Sharpen for arbitrary sizes
+            if size % 2 == 1:  # Only works with odd-sized kernels
+                center = size // 2
+                # Set center cross to -1
+                for i in range(size):
+                    for j in range(size):
+                        if i == center or j == center:
+                            self.kernel_elements[i][j].set(-1.0)
+                # Set center element to positive value
+                self.kernel_elements[center][center].set(float(size * 2 - 1))
+            else:
+                messagebox.showwarning("Warning", "Sharpen filter works best with odd-sized kernels. Using approximation.")
+                self.kernel_elements[size//2][size//2].set(float(size))
+                self.kernel_elements[size//2-1][size//2-1].set(-1.0)
+                self.kernel_elements[size//2-1][size//2].set(-1.0)
+                self.kernel_elements[size//2][size//2-1].set(-1.0)
+                self.kernel_elements[size//2][size//2+1].set(-1.0)
+                self.kernel_elements[size//2+1][size//2].set(-1.0)
     
     def refresh_samples(self):
         """Refresh the sample images"""
@@ -275,20 +348,30 @@ class MNISTPreprocessor(tk.Tk):
             height, width = image.shape
             k_height, k_width = kernel.shape
             
-            # Calculate output dimensions
-            out_height = (height - k_height) // stride + 1
-            out_width = (width - k_width) // stride + 1
+            # Calculate padding needed to maintain original size
+            pad_h = ((height - 1) * stride + k_height - height) // 2
+            pad_w = ((width - 1) * stride + k_width - width) // 2
+            
+            # Apply padding to image
+            padded_image = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='constant')
+            
+            # Calculate output dimensions - should match original image size
+            out_height = height
+            out_width = width
             
             # Initialize output image
             output = np.zeros((out_height, out_width))
             
             # Vectorized convolution using numpy for better performance
             for i in range(0, out_height):
+                y_pos = i * stride
                 for j in range(0, out_width):
+                    x_pos = j * stride
                     # Extract window
-                    window = image[i*stride:i*stride+k_height, j*stride:j*stride+k_width]
+                    window = padded_image[y_pos:y_pos+k_height, x_pos:x_pos+k_width]
                     # Apply kernel and sum
-                    output[i, j] = np.sum(window * kernel)
+                    if window.shape == kernel.shape:  # Ensure window has correct size
+                        output[i, j] = np.sum(window * kernel)
             
             # Normalize to [0, 1] range
             min_val = output.min()
@@ -299,8 +382,8 @@ class MNISTPreprocessor(tk.Tk):
             return output
         except Exception as e:
             print(f"Error in convolution: {str(e)}")
-            # Return a blank image of expected size in case of error
-            return np.zeros((28 // stride, 28 // stride))
+            # Return original image in case of error
+            return image
     
     def update_processed_images(self):
         """Update the processed images display"""
