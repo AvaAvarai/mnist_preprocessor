@@ -95,13 +95,23 @@ class MNISTPreprocessor(tk.Tk):
         stride_spin = ttk.Spinbox(kernel_frame, from_=1, to=99, textvariable=self.stride, width=10)
         stride_spin.pack(fill=tk.X, padx=5, pady=2)
         # Add trace to update immediately when value changes
-        self.stride.trace_add("write", lambda *args: self.validate_stride())
+        self.stride.trace_add("write", lambda *args: self.on_stride_change())
         
         # Kernel elements
         self.kernel_elements_frame = ttk.LabelFrame(kernel_frame, text="Kernel Elements")
         self.kernel_elements_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         self.create_kernel_ui()
+        
+        # Matrix size display
+        size_frame = ttk.LabelFrame(controls_frame, text="Matrix Dimensions")
+        size_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.size_label = ttk.Label(size_frame, text="Input: 28×28\nOutput: --×--")
+        self.size_label.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Update size information
+        self.update_size_info()
         
         # Apply button
         ttk.Button(controls_frame, text="Apply Fresh Preprocessing", command=self.update_processed_images).pack(
@@ -200,6 +210,7 @@ class MNISTPreprocessor(tk.Tk):
             self.kernel_size.set(3)  # Default if invalid
         
         self.create_kernel_ui()
+        self.update_size_info()
     
     def validate_stride(self):
         """Ensure stride is a positive integer"""
@@ -394,6 +405,9 @@ class MNISTPreprocessor(tk.Tk):
         kernel = self.get_kernel()
         stride = self.stride.get()
         
+        # Update size information display
+        self.update_size_info()
+        
         # Apply convolution to all samples
         self.processed_samples = {}
         for cls, samples in self.current_samples.items():
@@ -455,6 +469,19 @@ class MNISTPreprocessor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save CSV: {str(e)}")
             print(f"Error details: {e}")
+
+    def update_size_info(self):
+        """Update the size information label"""
+        size = self.kernel_size.get()
+        stride = self.stride.get()
+        input_size = (28, 28)
+        output_size = ((28 - size) // stride + 1, (28 - size) // stride + 1)
+        self.size_label.config(text=f"Input: {input_size[0]}×{input_size[1]}\nOutput: {output_size[0]}×{output_size[1]}")
+
+    def on_stride_change(self):
+        """Update size information when stride changes"""
+        self.validate_stride()
+        self.update_size_info()
 
 if __name__ == "__main__":
     app = MNISTPreprocessor()
