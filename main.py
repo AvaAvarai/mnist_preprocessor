@@ -27,6 +27,8 @@ class MNISTPreprocessor(tk.Tk):
         self.kernel_elements = [[tk.DoubleVar(value=1.0 if i == j else 0.0) 
                                 for j in range(5)] for i in range(5)]
         self.processed_samples = None  # Store processed samples
+        self.operation_mode = tk.StringVar(value="convolution")  # Default to convolution
+        self.pooling_type = tk.StringVar(value="max")  # Default to max pooling
         
         # Create the GUI
         self.create_widgets()
@@ -78,6 +80,28 @@ class MNISTPreprocessor(tk.Tk):
         ttk.Button(controls_frame, text="Refresh Samples", command=self.refresh_samples).pack(
             fill=tk.X, padx=5, pady=5)
         
+        # Operation mode selector
+        op_frame = ttk.LabelFrame(controls_frame, text="Operation")
+        op_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Radiobutton(op_frame, text="Convolution", variable=self.operation_mode, 
+                       value="convolution", command=self.toggle_operation_mode).pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Radiobutton(op_frame, text="Pooling", variable=self.operation_mode, 
+                       value="pooling", command=self.toggle_operation_mode).pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Pooling type (only visible when pooling is selected)
+        self.pooling_frame = ttk.Frame(op_frame)
+        self.pooling_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        ttk.Radiobutton(self.pooling_frame, text="Max Pooling", variable=self.pooling_type, 
+                       value="max", command=self.update_size_info).pack(side=tk.LEFT, padx=5, pady=2)
+        ttk.Radiobutton(self.pooling_frame, text="Average Pooling", variable=self.pooling_type, 
+                       value="avg", command=self.update_size_info).pack(side=tk.LEFT, padx=5, pady=2)
+        
+        # Initially hide pooling options if needed
+        if self.operation_mode.get() == "convolution":
+            self.pooling_frame.pack_forget()
+        
         # Kernel size
         kernel_frame = ttk.LabelFrame(controls_frame, text="Kernel Settings")
         kernel_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -112,6 +136,9 @@ class MNISTPreprocessor(tk.Tk):
         
         # Update size information
         self.update_size_info()
+        
+        # Now that all UI elements exist, toggle operation mode
+        self.toggle_operation_mode()
         
         # Apply button
         ttk.Button(controls_frame, text="Apply Fresh Preprocessing", command=self.update_processed_images).pack(
@@ -396,24 +423,66 @@ class MNISTPreprocessor(tk.Tk):
             # Return original image in case of error
             return image
     
+    def apply_pooling(self, image, kernel_size, stride, pool_type='max'):
+        """Apply pooling to an image using the given kernel size and stride"""
+        try:
+            if isinstance(image, torch.Tensor):
+                # Convert to numpy if it's a tensor
+                image = image.squeeze().numpy()
+            
+            # Get dimensions
+            height, width = image.shape
+            
+            # Calculate output dimensions based on stride
+            out_height = (height - kernel_size) // stride + 1
+            out_width = (width - kernel_size) // stride + 1
+            
+            # Initialize output image
+            output = np.zeros((out_height, out_width))
+            
+            # Perform pooling with stride
+            for i in range(out_height):
+                for j in range(out_width):
+                    # Extract window
+                    window = image[i*stride:i*stride+kernel_size, j*stride:j*stride+kernel_size]
+                    
+                    # Apply pooling
+                    if pool_type == 'max':
+                        output[i, j] = np.max(window)
+                    else:  # Average pooling
+                        output[i, j] = np.mean(window)
+            
+            return output
+        except Exception as e:
+            print(f"Error in pooling: {str(e)}")
+            # Return original image in case of error
+            return image
+    
+    def process_image(self, image):
+        """Process an image using the current settings (convolution or pooling)"""
+        if self.operation_mode.get() == "convolution":
+            # Use convolution with custom kernel
+            kernel = self.get_kernel()
+            return self.apply_convolution(image, kernel, self.stride.get())
+        else:
+            # Use pooling
+            return self.apply_pooling(image, self.kernel_size.get(), self.stride.get(), 
+                                     self.pooling_type.get())
+    
     def update_processed_images(self):
         """Update the processed images display"""
         if not hasattr(self, 'current_samples'):
             return
         
-        # Get current kernel and stride
-        kernel = self.get_kernel()
-        stride = self.stride.get()
-        
         # Update size information display
         self.update_size_info()
         
-        # Apply convolution to all samples
+        # Apply processing to all samples
         self.processed_samples = {}
         for cls, samples in self.current_samples.items():
             self.processed_samples[cls] = []
             for img in samples:
-                processed_img = self.apply_convolution(img, kernel, stride)
+                processed_img = self.process_image(img)
                 self.processed_samples[cls].append(processed_img)
         
         # Display processed samples
@@ -476,11 +545,38 @@ class MNISTPreprocessor(tk.Tk):
         stride = self.stride.get()
         input_size = (28, 28)
         output_size = ((28 - size) // stride + 1, (28 - size) // stride + 1)
-        self.size_label.config(text=f"Input: {input_size[0]}×{input_size[1]}\nOutput: {output_size[0]}×{output_size[1]}")
+        
+        # Set label text based on operation mode
+        operation = "Convolution" if self.operation_mode.get() == "convolution" else "Pooling"
+        if self.operation_mode.get() == "pooling":
+            pool_type = "Max" if self.pooling_type.get() == "max" else "Average"
+            operation = f"{pool_type} {operation}"
+        
+        self.size_label.config(text=f"Input: {input_size[0]}×{input_size[1]}\n"
+                               f"{operation} Output: {output_size[0]}×{output_size[1]}\n"
+                               f"({output_size[0]*output_size[1]} pixels total)")
+        
+        # Update kernel frame visibility based on operation mode
+        if self.operation_mode.get() == "convolution":
+            self.kernel_elements_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        else:
+            self.kernel_elements_frame.pack_forget()
 
     def on_stride_change(self):
         """Update size information when stride changes"""
         self.validate_stride()
+        self.update_size_info()
+
+    def toggle_operation_mode(self):
+        """Toggle between convolution and pooling"""
+        if self.operation_mode.get() == "convolution":
+            self.pooling_frame.pack_forget()
+            if hasattr(self, 'kernel_elements_frame'):
+                self.kernel_elements_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        else:
+            self.pooling_frame.pack(fill=tk.X, padx=5, pady=2)
+            if hasattr(self, 'kernel_elements_frame'):
+                self.kernel_elements_frame.pack_forget()
         self.update_size_info()
 
 if __name__ == "__main__":
