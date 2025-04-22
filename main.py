@@ -29,6 +29,7 @@ class MNISTPreprocessor(tk.Tk):
         self.processed_samples = None  # Store processed samples
         self.operation_mode = tk.StringVar(value="convolution")  # Default to convolution
         self.pooling_type = tk.StringVar(value="max")  # Default to max pooling
+        self.edge_strip = tk.IntVar(value=2)  # Default to stripping 2 pixels from each edge
         
         # Create the GUI
         self.create_widgets()
@@ -120,6 +121,13 @@ class MNISTPreprocessor(tk.Tk):
         stride_spin.pack(fill=tk.X, padx=5, pady=2)
         # Add trace to update immediately when value changes
         self.stride.trace_add("write", lambda *args: self.on_stride_change())
+        
+        # Edge strip
+        ttk.Label(kernel_frame, text="Strip Edge Pixels:").pack(anchor=tk.W, padx=5, pady=2)
+        edge_strip_spin = ttk.Spinbox(kernel_frame, from_=0, to=10, textvariable=self.edge_strip, width=10)
+        edge_strip_spin.pack(fill=tk.X, padx=5, pady=2)
+        # Add trace to update immediately when value changes
+        self.edge_strip.trace_add("write", lambda *args: self.update_size_info())
         
         # Kernel elements
         self.kernel_elements_frame = ttk.LabelFrame(kernel_frame, text="Kernel Elements")
@@ -460,6 +468,20 @@ class MNISTPreprocessor(tk.Tk):
     
     def process_image(self, image):
         """Process an image using the current settings (convolution or pooling)"""
+        # Convert to numpy if it's a tensor
+        if isinstance(image, torch.Tensor):
+            image = image.squeeze().numpy()
+        
+        # Strip pixels from edges if needed
+        strip_amount = self.edge_strip.get()
+        if strip_amount > 0:
+            # Ensure we don't strip more than half the image size
+            h, w = image.shape
+            strip_amount = min(strip_amount, h // 2, w // 2)
+            if strip_amount > 0:
+                image = image[strip_amount:-strip_amount, strip_amount:-strip_amount]
+        
+        # Apply the selected operation
         if self.operation_mode.get() == "convolution":
             # Use convolution with custom kernel
             kernel = self.get_kernel()
@@ -543,8 +565,14 @@ class MNISTPreprocessor(tk.Tk):
         """Update the size information label"""
         size = self.kernel_size.get()
         stride = self.stride.get()
+        strip_amount = self.edge_strip.get()
+        
+        # Calculate input size after stripping
         input_size = (28, 28)
-        output_size = ((28 - size) // stride + 1, (28 - size) // stride + 1)
+        stripped_size = (input_size[0] - 2*strip_amount, input_size[1] - 2*strip_amount)
+        
+        # Calculate output size after convolution/pooling
+        output_size = ((stripped_size[0] - size) // stride + 1, (stripped_size[1] - size) // stride + 1)
         
         # Set label text based on operation mode
         operation = "Convolution" if self.operation_mode.get() == "convolution" else "Pooling"
@@ -552,9 +580,14 @@ class MNISTPreprocessor(tk.Tk):
             pool_type = "Max" if self.pooling_type.get() == "max" else "Average"
             operation = f"{pool_type} {operation}"
         
-        self.size_label.config(text=f"Input: {input_size[0]}×{input_size[1]}\n"
-                               f"{operation} Output: {output_size[0]}×{output_size[1]}\n"
-                               f"({output_size[0]*output_size[1]} pixels total)")
+        # Create detailed size information
+        size_info = f"Original: {input_size[0]}×{input_size[1]}\n"
+        if strip_amount > 0:
+            size_info += f"After stripping {strip_amount}px: {stripped_size[0]}×{stripped_size[1]}\n"
+        size_info += f"{operation} Output: {output_size[0]}×{output_size[1]}\n"
+        size_info += f"({output_size[0]*output_size[1]} pixels total)"
+        
+        self.size_label.config(text=size_info)
         
         # Update kernel frame visibility based on operation mode
         if self.operation_mode.get() == "convolution":
